@@ -12,7 +12,7 @@
 
   <!--
   ==============================================================================
-  EXHIBITION ROAD — PROJECT NOTES & README (Milestone 1)
+  EXHIBITION ROAD — PROJECT NOTES & README (Milestones 2 + 3)
   ==============================================================================
 
   HOW TO RUN
@@ -24,14 +24,14 @@
      on your phone connected to the same Wi-Fi network.
      (ES modules and import maps require HTTP/HTTPS, not file:// URLs.)
 
-  HOW TO ADD A STATION (for M2+ / final build)
+  HOW TO ADD A STATION
   1. Write a `buildStationX(parent)` function in Section 4 (SCENES) that adds
      3D meshes to `parent` (centered near origin, +Y up, front facing +Z,
      footprint radius <= 5.5, resting on y = 0) and optionally returns
      `{ update(time, dt) }`.
   2. Add an entry `{ id, title, description, build }` to the `SECTIONS` array
-     in Section 5. Road length, station placement along the planet, HUD dots,
-     and accessible page text update automatically.
+     in Section 5. Road length, station placement along the planet, signs,
+     clickable HUD dots, and accessible page text update automatically.
 
   MAIN TUNABLE CONSTANTS (see Section 1: CONFIG)
   - PLANET_RADIUS      Radius of the world sphere (150)
@@ -40,26 +40,28 @@
   - ROAD_END_OFFSET    Extra road distance after the last station (40)
   - FOG_NEAR / FOG_FAR Soft fog fade range (25 to 90)
   - STATION_HIDE_DIST  Cull stations farther than this from camera (80)
-  - MAX_SPEED          Top walking speed in world units/sec (8)
+  - MAX_SPEED          Top manual walking speed in world units/sec (8)
+  - NAV_SPEED          Cruise speed when tapping a progress stop dot (20)
   - SPEED_EASE_RATE    Exponential acceleration/deceleration rate (5)
   - LOOK_SENSITIVITY   Camera rotation radians per dragged pixel (0.005)
   - INVERT_LOOK        Flip drag-to-look direction (false)
   - ENABLE_SHADOWS     Toggle directional sunlight shadow map (true)
   - PALETTE            Shared low-poly color scheme
 
-  DECISIONS (M1)
+  DECISIONS
   - Sphere orientation: The ground sphere's poles are rotated onto the X axis
-    (left/right of the road) instead of Y. That puts uniform quad facets along
-    the road equator rather than a 64-triangle pole pinch right at progress = 0.
-  - Road & crate grounding: Because a 64x32 flat-shaded sphere curves slightly
-    between vertices, the road slab, verges, and M1 placeholder crates extend
-    ~0.4-0.6 units below the nominal radius so edges never visibly float.
+    (left/right of the road) instead of Y, avoiding a 64-triangle pinch right
+    at progress = 0.
+  - Grounding: Road verges, sign posts, and diorama bases extend ~0.4-0.6 units
+    below y = 0 so edges never visibly float over the curved faceted sphere.
   - Road ends: The road strip extends 5 units past progress = 0 (behind) and
-    5 units past ROAD_END (ahead) so looking straight down at either stop limit
-    still shows solid road beneath your feet.
-  - M1 placeholders: Each station currently spawns a simple two-part wooden
-    crate at SCENE_LAYOUT (top height ~3.3 units) so horizon occlusion can be
-    tested before signs (M2) and dioramas (M3/M4) are added.
+    5 units past ROAD_END (ahead) so looking down at either limit still shows
+    road under your feet.
+  - Clickable progress stops (requested extension): Tapping a dot smoothly
+    travels along the road to that station's s position using critically damped
+    easing (never modifying camera yaw/pitch) so exhibits still rise naturally
+    over the horizon. Pressing Forward or Backward immediately cancels the
+    auto-cruise and restores manual control.
   ==============================================================================
   -->
 
@@ -93,40 +95,66 @@
       -webkit-touch-callout: none;
     }
 
-    /* Top-center progress dots (non-interactive) */
+    /* Top-center clickable progress stops */
     .hud-dots {
       position: fixed;
-      top: max(18px, calc(12px + env(safe-area-inset-top)));
+      top: max(16px, calc(10px + env(safe-area-inset-top)));
       left: 50%;
       transform: translateX(-50%);
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 8px 14px;
+      gap: 4px;
+      padding: 4px 8px;
       border-radius: 999px;
-      background: rgba(34, 42, 48, 0.22);
-      pointer-events: none;
-      z-index: 10;
+      background: rgba(34, 42, 48, 0.25);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      touch-action: none;
+      z-index: 20;
+    }
+
+    .hud-dot-btn {
+      width: 34px;
+      height: 30px;
+      border: none;
+      padding: 0;
+      margin: 0;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
     .hud-dot {
-      width: 9px;
-      height: 9px;
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
-      background: rgba(255, 255, 255, 0.48);
-      transition: background-color 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+      background: rgba(255, 255, 255, 0.52);
+      transition: background-color 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
+      pointer-events: none;
     }
 
-    .hud-dot.is-active {
+    .hud-dot-btn.is-target .hud-dot {
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.55);
+      transform: scale(1.15);
+    }
+
+    .hud-dot-btn.is-active .hud-dot {
       background: #f2a541;
       transform: scale(1.3);
-      box-shadow: 0 0 8px rgba(242, 165, 65, 0.75);
+      box-shadow: 0 0 8px rgba(242, 165, 65, 0.8);
     }
 
     /* First-use hint (non-interactive, fades out on first movement) */
     .hud-hint {
       position: fixed;
-      top: max(58px, calc(52px + env(safe-area-inset-top)));
+      top: max(62px, calc(56px + env(safe-area-inset-top)));
       left: 50%;
       transform: translateX(-50%);
       max-width: min(300px, calc(100vw - 32px));
@@ -217,7 +245,7 @@
 </head>
 <body>
   <!-- HUD overlays -->
-  <div class="hud-dots" id="hud-dots" aria-hidden="true"></div>
+  <nav class="hud-dots" id="hud-dots" aria-label="Exhibition stations"></nav>
   <div class="hud-hint" id="hud-hint" aria-hidden="true">
     Hold the arrows to move. Drag to look around.
   </div>
@@ -276,11 +304,17 @@
 
       // Movement & look controls
       MAX_SPEED: 8,
+      NAV_SPEED: 20,             // cruise speed when tapping a progress dot
+      NAV_DAMPING: 1.25,         // critically damped arrival slope (1/s)
       SPEED_EASE_RATE: 5,
       MAX_DT: 0.05,
       LOOK_SENSITIVITY: 0.005,
       MAX_PITCH_DEG: 89,
       INVERT_LOOK: false,
+
+      // Sign canvas dimensions (minimum 1536 x 1152)
+      SIGN_CANVAS_WIDTH: 1536,
+      SIGN_CANVAS_HEIGHT: 1152,
 
       // Lighting & rendering
       ENABLE_SHADOWS: true,
@@ -292,16 +326,26 @@
       PALETTE: {
         sky: 0xbfe3f0,
         grass: 0x7bbf6a,
+        lawn: 0x84c973,
+        leafLight: 0x76bc66,
+        leafDark: 0x5c9e4d,
         road: 0x4a4d52,
         verge: 0x62676e,
         line: 0xf2e9c9,
         wood: 0x8a5a3b,
         cream: 0xf3e9d2,
+        white: 0xfaf7f0,
+        stone: 0xd8cfc2,
         brick: 0xb5533c,
         roof: 0x7a3b2e,
         red: 0xd64541,
         blue: 0x3f78c4,
         accent: 0xf2a541,
+        windowGlow: 0xaad8f5,
+        skin: 0xf1c29b,
+        pants: 0x3d4d63,
+        hairBrown: 0x5c3c24,
+        metal: 0x767f8a,
         crate: 0xc28e5c,
       },
     };
@@ -322,47 +366,572 @@
 
 
     // ===== 2. PRIMITIVES =====
-    // Material cache + minimal addBox helper for M1 placeholders (full set in M3)
     const materialCache = new Map();
+    const geometryCache = new Map();
 
-    function getFlatMaterial(color) {
-      if (!materialCache.has(color)) {
+    function getMaterial(color, options = {}) {
+      const emissive = options.emissive ?? 0x000000;
+      const emissiveIntensity = options.emissiveIntensity ?? (emissive ? 0.45 : 0);
+      const roughness = options.roughness ?? 0.9;
+      const metalness = options.metalness ?? 0.0;
+      const opacity = options.opacity ?? 1.0;
+      const transparent = options.transparent ?? (opacity < 1.0);
+      const side = options.side ?? THREE.FrontSide;
+
+      const key = `${color}|${emissive}|${emissiveIntensity}|${roughness}|${metalness}|${opacity}|${transparent}|${side}`;
+      if (!materialCache.has(key)) {
         materialCache.set(
-          color,
+          key,
           new THREE.MeshStandardMaterial({
             color,
             flatShading: true,
-            roughness: 0.9,
-            metalness: 0.0,
+            roughness,
+            metalness,
+            emissive,
+            emissiveIntensity,
+            opacity,
+            transparent,
+            side,
           })
         );
       }
-      return materialCache.get(color);
+      return materialCache.get(key);
     }
 
-    function addBox(parent, size, position, color) {
-      const geo = new THREE.BoxGeometry(size[0], size[1], size[2]);
-      const mesh = new THREE.Mesh(geo, getFlatMaterial(color));
+    function getGeometry(key, factory) {
+      if (!geometryCache.has(key)) {
+        geometryCache.set(key, factory());
+      }
+      return geometryCache.get(key);
+    }
+
+    function createMesh(parent, geo, position, color, options = {}) {
+      const mesh = new THREE.Mesh(geo, getMaterial(color, options));
       mesh.position.set(position[0], position[1], position[2]);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      if (options.rotation) {
+        mesh.rotation.set(options.rotation[0], options.rotation[1], options.rotation[2]);
+      }
+      if (options.scale !== undefined) {
+        if (Array.isArray(options.scale)) {
+          mesh.scale.set(options.scale[0], options.scale[1], options.scale[2]);
+        } else {
+          mesh.scale.setScalar(options.scale);
+        }
+      }
+      mesh.castShadow = options.castShadow !== undefined ? options.castShadow : true;
+      mesh.receiveShadow = options.receiveShadow !== undefined ? options.receiveShadow : true;
       parent.add(mesh);
       return mesh;
     }
 
+    function addBox(parent, size, position, color, options = {}) {
+      const [w, h, d] = size;
+      const geo = getGeometry(`box:${w}:${h}:${d}`, () => new THREE.BoxGeometry(w, h, d));
+      return createMesh(parent, geo, position, color, options);
+    }
+
+    function addCylinder(parent, radiusTop, radiusBottom, height, position, color, options = {}) {
+      const seg = options.segments ?? 12;
+      const geo = getGeometry(
+        `cyl:${radiusTop}:${radiusBottom}:${height}:${seg}`,
+        () => new THREE.CylinderGeometry(radiusTop, radiusBottom, height, seg)
+      );
+      return createMesh(parent, geo, position, color, options);
+    }
+
+    function addCone(parent, radius, height, position, color, options = {}) {
+      const seg = options.segments ?? 10;
+      const geo = getGeometry(
+        `cone:${radius}:${height}:${seg}`,
+        () => new THREE.ConeGeometry(radius, height, seg)
+      );
+      return createMesh(parent, geo, position, color, options);
+    }
+
+    function addSphere(parent, radius, position, color, options = {}) {
+      const ws = options.widthSegments ?? 10;
+      const hs = options.heightSegments ?? 8;
+      const geo = getGeometry(
+        `sph:${radius}:${ws}:${hs}`,
+        () => new THREE.SphereGeometry(radius, ws, hs)
+      );
+      return createMesh(parent, geo, position, color, options);
+    }
+
+    function addCapsule(parent, radius, length, position, color, options = {}) {
+      const cs = options.capSegments ?? 4;
+      const rs = options.radialSegments ?? 8;
+      const geo = getGeometry(
+        `cap:${radius}:${length}:${cs}:${rs}`,
+        () => new THREE.CapsuleGeometry(radius, length, cs, rs)
+      );
+      return createMesh(parent, geo, position, color, options);
+    }
+
+    // Triangular prism centered at origin; ridge runs along Z by default
+    function addPrism(parent, size, position, color, options = {}) {
+      const [w, h, d] = size;
+      const geo = getGeometry(`prism:${w}:${h}:${d}`, () => {
+        const hw = w * 0.5;
+        const hh = h * 0.5;
+        const hd = d * 0.5;
+
+        // Per-face vertices so flat shading and shadow normalBias stay sharp
+        const verts = new Float32Array([
+          // Front triangle (+Z)
+          -hw, -hh,  hd,   hw, -hh,  hd,   0,  hh,  hd,
+          // Back triangle (-Z)
+           hw, -hh, -hd,  -hw, -hh, -hd,   0,  hh, -hd,
+          // Right roof slope (+X, +Y)
+           hw, -hh,  hd,   hw, -hh, -hd,   0,  hh, -hd,
+           hw, -hh,  hd,   0,   hh, -hd,   0,  hh,  hd,
+          // Left roof slope (-X, +Y)
+          -hw, -hh, -hd,  -hw, -hh,  hd,   0,  hh,  hd,
+          -hw, -hh, -hd,   0,   hh,  hd,   0,  hh, -hd,
+          // Bottom face (-Y)
+          -hw, -hh, -hd,   hw, -hh, -hd,  hw, -hh,  hd,
+          -hw, -hh, -hd,   hw, -hh,  hd, -hw, -hh,  hd,
+        ]);
+
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+        g.computeVertexNormals();
+        return g;
+      });
+      return createMesh(parent, geo, position, color, options);
+    }
+
+    // Horizontal circular disc resting flat in XZ plane (casts/receives cleanly)
+    function addDisc(parent, radius, position, color, options = {}) {
+      const thickness = options.thickness ?? 0.08;
+      const seg = options.segments ?? 24;
+      const geo = getGeometry(
+        `disc:${radius}:${thickness}:${seg}`,
+        () => new THREE.CylinderGeometry(radius, radius, thickness, seg)
+      );
+      return createMesh(parent, geo, position, color, options);
+    }
+
+    // Stylized faceless low-poly figure (~12-14 meshes)
+    // Standing: feet rest on y = 0. Seated: feet on y = 0, hips at y ~ 0.46 * scale.
+    function addPerson(parent, opts = {}) {
+      const height = opts.height ?? 1.75;
+      const s = height / 1.75;
+      const shirt = opts.shirt ?? CONFIG.PALETTE.blue;
+      const pants = opts.pants ?? CONFIG.PALETTE.pants;
+      const skin = opts.skin ?? CONFIG.PALETTE.skin;
+      const hair = opts.hair ?? CONFIG.PALETTE.hairBrown;
+      const shoeColor = opts.shoes ?? 0x3b332e;
+      const seated = Boolean(opts.seated);
+      const pose = opts.pose ?? 'idle';
+
+      const person = new THREE.Group();
+      if (opts.position) {
+        person.position.set(opts.position[0], opts.position[1], opts.position[2]);
+      }
+      if (opts.rotationY !== undefined) {
+        person.rotation.y = opts.rotationY;
+      }
+      parent.add(person);
+
+      const hipY = seated ? 0.46 * s : 0.80 * s;
+
+      // Legs & shoes
+      const legOffsets = [-0.11 * s, 0.11 * s];
+      for (let i = 0; i < 2; i++) {
+        const lx = legOffsets[i];
+        if (seated) {
+          // Upper thighs extend forward (+Z), shins drop vertically to shoes
+          addCapsule(person, 0.068 * s, 0.24 * s, [lx, hipY, 0.16 * s], pants, {
+            rotation: [Math.PI / 2, 0, 0],
+          });
+          addCapsule(person, 0.058 * s, 0.24 * s, [lx, 0.26 * s, 0.31 * s], pants);
+          addBox(person, [0.11 * s, 0.09 * s, 0.18 * s], [lx, 0.045 * s, 0.35 * s], shoeColor);
+        } else {
+          addCapsule(person, 0.068 * s, 0.24 * s, [lx, 0.62 * s, 0], pants);
+          addCapsule(person, 0.058 * s, 0.24 * s, [lx, 0.27 * s, 0], pants);
+          addBox(person, [0.11 * s, 0.09 * s, 0.18 * s], [lx, 0.045 * s, 0.03 * s], shoeColor);
+        }
+      }
+
+      // Torso
+      const torsoY = hipY + 0.28 * s;
+      addBox(person, [0.38 * s, 0.54 * s, 0.22 * s], [0, torsoY, 0], shirt);
+
+      // Head & hair
+      const headY = hipY + 0.74 * s;
+      addSphere(person, 0.165 * s, [0, headY, 0], skin);
+      if (opts.hair !== null) {
+        addSphere(person, 0.172 * s, [0, headY + 0.04 * s, -0.02 * s], hair, {
+          scale: [1, 0.78, 1],
+        });
+      }
+
+      // Optional baseball cap
+      if (opts.hat) {
+        addCylinder(person, 0.15 * s, 0.175 * s, 0.11 * s, [0, headY + 0.13 * s, 0], opts.hat, {
+          segments: 10,
+        });
+        addBox(person, [0.22 * s, 0.03 * s, 0.16 * s], [0, headY + 0.09 * s, 0.14 * s], opts.hat);
+      }
+
+      // Articulated arm pivots at shoulders
+      const shoulderY = hipY + 0.49 * s;
+      const leftArm = new THREE.Group();
+      leftArm.position.set(-0.25 * s, shoulderY, 0);
+      person.add(leftArm);
+      addCapsule(leftArm, 0.055 * s, 0.28 * s, [0, -0.17 * s, 0], shirt);
+      addSphere(leftArm, 0.058 * s, [0, -0.36 * s, 0], skin);
+
+      const rightArm = new THREE.Group();
+      rightArm.position.set(0.25 * s, shoulderY, 0);
+      person.add(rightArm);
+      addCapsule(rightArm, 0.055 * s, 0.28 * s, [0, -0.17 * s, 0], shirt);
+      addSphere(rightArm, 0.058 * s, [0, -0.36 * s, 0], skin);
+
+      // Apply requested pose
+      if (seated) {
+        leftArm.rotation.set(-0.65, 0, 0.08);
+        rightArm.rotation.set(-0.65, 0, -0.08);
+      } else if (pose === 'throw') {
+        rightArm.rotation.set(-2.1, 0, -0.25);
+        leftArm.rotation.set(-0.55, 0, 0.25);
+      } else if (pose === 'bat') {
+        rightArm.rotation.set(-1.1, -0.35, -0.3);
+        leftArm.rotation.set(-1.05, 0.45, 0.2);
+      } else {
+        leftArm.rotation.set(0, 0, 0.1);
+        rightArm.rotation.set(0, 0, -0.1);
+      }
+
+      return { group: person, leftArm, rightArm, scale: s };
+    }
+
 
     // ===== 3. SIGNS =====
-    // (Scheduled for Milestone 2)
+    // Wraps text onto a 2D canvas and returns the y position below the final line
+    function wrapText(ctx, text, x, y, maxWidth, lineHeight, maxLines = Infinity) {
+      const words = text.split(/\s+/);
+      let line = '';
+      let lineCount = 0;
+
+      for (let i = 0; i < words.length; i++) {
+        const testLine = line ? line + ' ' + words[i] : words[i];
+        if (ctx.measureText(testLine).width > maxWidth && line) {
+          lineCount++;
+          if (lineCount >= maxLines) {
+            // Trim trailing words if maxLines is reached
+            let clamped = line;
+            while (ctx.measureText(clamped + '...').width > maxWidth && clamped.includes(' ')) {
+              clamped = clamped.slice(0, clamped.lastIndexOf(' '));
+            }
+            ctx.fillText(clamped + '...', x, y);
+            return y + lineHeight;
+          }
+          ctx.fillText(line, x, y);
+          line = words[i];
+          y += lineHeight;
+        } else {
+          line = testLine;
+        }
+      }
+
+      if (line) {
+        ctx.fillText(line, x, y);
+        y += lineHeight;
+      }
+      return y;
+    }
+
+    function createSignTexture(title, description, maxAnisotropy) {
+      const w = CONFIG.SIGN_CANVAS_WIDTH;
+      const h = CONFIG.SIGN_CANVAS_HEIGHT;
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+
+      const ctx = canvas.getContext('2d');
+
+      // Cream card background
+      ctx.fillStyle = '#f3e9d2';
+      ctx.fillRect(0, 0, w, h);
+
+      // Subtle inner hairline frame
+      ctx.strokeStyle = 'rgba(138, 90, 59, 0.22)';
+      ctx.lineWidth = 6;
+      ctx.strokeRect(42, 42, w - 84, h - 84);
+
+      const padX = 116;
+      const maxWidth = w - padX * 2;
+      const fontStack =
+        'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
+      // Thin warm accent bar
+      ctx.fillStyle = '#f2a541';
+      ctx.fillRect(padX, 118, 168, 14);
+
+      // Bold, large title (max 3 lines)
+      ctx.fillStyle = '#222a30';
+      ctx.textBaseline = 'top';
+      ctx.font = `700 90px ${fontStack}`;
+      const afterTitleY = wrapText(ctx, title, padX, 178, maxWidth, 108, 3);
+
+      // Comfortable description text
+      ctx.fillStyle = '#3c454d';
+      ctx.font = `400 50px ${fontStack}`;
+      wrapText(ctx, description, padX, afterTitleY + 46, maxWidth, 74);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = maxAnisotropy;
+      texture.generateMipmaps = true;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.needsUpdate = true;
+      return texture;
+    }
+
+    // Builds the wooden gallery sign: two posts, thick board, crisp face plane
+    function buildSign(parent, section, maxAnisotropy) {
+      const bw = SIGN_LAYOUT.boardWidth;
+      const bh = SIGN_LAYOUT.boardHeight;
+      const boardCenterY = 2.48;
+      const boardDepth = 0.22;
+
+      // Two sturdy wooden posts planted down below y = 0 to meet curved ground
+      const postHeight = 3.2;
+      const postY = postHeight * 0.5 - 0.55;
+      addBox(parent, [0.22, postHeight, 0.22], [-bw * 0.34, postY, -0.14], CONFIG.PALETTE.wood);
+      addBox(parent, [0.22, postHeight, 0.22], [ bw * 0.34, postY, -0.14], CONFIG.PALETTE.wood);
+
+      // Thick wooden backing board framing the cream sign face
+      addBox(
+        parent,
+        [bw + 0.18, bh + 0.18, boardDepth],
+        [0, boardCenterY, 0],
+        CONFIG.PALETTE.wood
+      );
+
+      // Unlit crisp sign face just in front of the board
+      const texture = createSignTexture(section.title, section.description, maxAnisotropy);
+      const faceGeo = new THREE.PlaneGeometry(bw, bh);
+      const faceMat = new THREE.MeshBasicMaterial({
+        map: texture,
+        toneMapped: false,
+      });
+      const faceMesh = new THREE.Mesh(faceGeo, faceMat);
+      faceMesh.position.set(0, boardCenterY, boardDepth * 0.5 + 0.01);
+      parent.add(faceMesh);
+    }
 
 
     // ===== 4. SCENES =====
-    // M1 placeholder diorama: a simple two-part wooden crate resting on y = 0
-    // (skirt dips slightly into y < 0 so it meets the curved planet cleanly)
+    // M1/M2 placeholder crate (still used by Stations 2 & 3 until M4)
     function buildPlaceholderCrate(parent) {
-      // Main crate body (extends from y = -0.45 up to y = 3.15)
       addBox(parent, [3.8, 3.6, 3.8], [0, 1.35, 0], CONFIG.PALETTE.crate);
-      // Darker lid rim so rotation / orientation is easy to judge visually
       addBox(parent, [4.0, 0.35, 4.0], [0, 3.12, 0], CONFIG.PALETTE.wood);
+    }
+
+    // Station 1: "Front-yard baseball"
+    function buildFrontYardBaseball(parent) {
+      const Y0 = 0.08; // top surface height of the rounded lawn slab
+
+      // Rounded green lawn slab extending slightly under y = 0 to hug the planet
+      addDisc(parent, 5.2, [0, Y0 - 0.33, 0], CONFIG.PALETTE.lawn, {
+        thickness: 0.66,
+        segments: 28,
+      });
+
+      // --- Classic two-storey suburban house (back-left) ---
+      const hx = -0.45;
+      const hz = -1.75;
+
+      // Foundation trim & cream siding box
+      addBox(parent, [3.72, 0.22, 2.72], [hx, Y0 + 0.11, hz], CONFIG.PALETTE.stone);
+      addBox(parent, [3.60, 2.95, 2.60], [hx, Y0 + 1.58, hz], CONFIG.PALETTE.cream);
+
+      // Dark-red gabled roof (triangular prism rotated so ridge runs across X)
+      addPrism(
+        parent,
+        [2.95, 1.50, 3.96],
+        [hx, Y0 + 3.05 + 0.75, hz],
+        CONFIG.PALETTE.roof,
+        { rotation: [0, Math.PI / 2, 0] }
+      );
+
+      // Brick chimney with cap on the right slope
+      addBox(parent, [0.50, 1.35, 0.50], [hx + 1.15, Y0 + 4.15, hz - 0.55], CONFIG.PALETTE.brick);
+      addBox(parent, [0.60, 0.11, 0.60], [hx + 1.15, Y0 + 4.86, hz - 0.55], CONFIG.PALETTE.road);
+
+      // Blue front door, white frame, brass doorknob, two steps & porch roof
+      const frontWallZ = hz + 1.30;
+      addBox(parent, [0.92, 1.56, 0.06], [hx, Y0 + 1.06, frontWallZ + 0.02], CONFIG.PALETTE.white);
+      addBox(parent, [0.76, 1.48, 0.09], [hx, Y0 + 1.02, frontWallZ + 0.03], CONFIG.PALETTE.blue);
+      addSphere(parent, 0.05, [hx + 0.26, Y0 + 0.96, frontWallZ + 0.09], CONFIG.PALETTE.accent);
+
+      // Two steps leading up to the front door
+      addBox(parent, [1.58, 0.28, 0.82], [hx, Y0 + 0.14, frontWallZ + 0.40], CONFIG.PALETTE.stone);
+      addBox(parent, [1.34, 0.14, 0.42], [hx, Y0 + 0.07, frontWallZ + 0.94], CONFIG.PALETTE.stone);
+
+      // Small porch roof on two slender posts
+      addCylinder(parent, 0.06, 0.06, 1.52, [hx - 0.64, Y0 + 1.04, frontWallZ + 0.72], CONFIG.PALETTE.white, {
+        segments: 8,
+      });
+      addCylinder(parent, 0.06, 0.06, 1.52, [hx + 0.64, Y0 + 1.04, frontWallZ + 0.72], CONFIG.PALETTE.white, {
+        segments: 8,
+      });
+      addBox(parent, [1.66, 0.14, 0.96], [hx, Y0 + 1.85, frontWallZ + 0.44], CONFIG.PALETTE.roof, {
+        rotation: [0.18, 0, 0],
+      });
+
+      // Four windows: white frames + faintly emissive pale-blue glass
+      const windowPositions = [
+        [hx - 1.15, Y0 + 2.34],
+        [hx + 1.15, Y0 + 2.34],
+        [hx - 1.18, Y0 + 1.08],
+        [hx + 1.18, Y0 + 1.08],
+      ];
+      for (let i = 0; i < windowPositions.length; i++) {
+        const [wx, wy] = windowPositions[i];
+        addBox(parent, [0.64, 0.72, 0.07], [wx, wy, frontWallZ + 0.02], CONFIG.PALETTE.white);
+        addBox(parent, [0.48, 0.56, 0.08], [wx, wy, frontWallZ + 0.03], CONFIG.PALETTE.windowGlow, {
+          emissive: CONFIG.PALETTE.windowGlow,
+          emissiveIntensity: 0.45,
+        });
+      }
+
+      // --- Round low-poly tree (right of house) ---
+      addCylinder(parent, 0.20, 0.28, 1.80, [2.75, Y0 + 0.90, -1.35], CONFIG.PALETTE.wood, {
+        segments: 8,
+      });
+      addSphere(parent, 1.02, [2.75, Y0 + 2.35, -1.35], CONFIG.PALETTE.leafDark);
+      addSphere(parent, 0.80, [2.15, Y0 + 1.98, -1.05], CONFIG.PALETTE.leafLight);
+      addSphere(parent, 0.82, [3.22, Y0 + 1.96, -1.60], CONFIG.PALETTE.grass);
+
+      // --- White picket fence along the front of the lawn with a walkway gap ---
+      function addFenceSpan(x0, z0, x1, z1, picketCount) {
+        const dx = x1 - x0;
+        const dz = z1 - z0;
+        const len = Math.hypot(dx, dz);
+        const angleY = -Math.atan2(dz, dx);
+        const mx = (x0 + x1) * 0.5;
+        const mz = (z0 + z1) * 0.5;
+
+        addBox(parent, [len, 0.08, 0.06], [mx, Y0 + 0.46, mz], CONFIG.PALETTE.white, {
+          rotation: [0, angleY, 0],
+        });
+        for (let i = 0; i < picketCount; i++) {
+          const t = (i + 0.5) / picketCount;
+          const px = x0 + dx * t;
+          const pz = z0 + dz * t;
+          addBox(parent, [0.13, 0.72, 0.06], [px, Y0 + 0.36, pz], CONFIG.PALETTE.white, {
+            rotation: [0, angleY, 0],
+          });
+        }
+      }
+
+      addFenceSpan(-3.55, 2.75, -0.90, 3.65, 6);
+      addFenceSpan( 0.90, 3.65,  3.55, 2.75, 6);
+      // Gate posts flanking the gap
+      addBox(parent, [0.16, 0.84, 0.16], [-0.85, Y0 + 0.42, 3.66], CONFIG.PALETTE.white);
+      addBox(parent, [0.16, 0.84, 0.16], [ 0.85, Y0 + 0.42, 3.66], CONFIG.PALETTE.white);
+
+      // --- Mailbox with red flag ---
+      const mbX = 1.25;
+      const mbZ = 3.92;
+      addBox(parent, [0.10, 0.92, 0.10], [mbX, Y0 + 0.46, mbZ], CONFIG.PALETTE.wood);
+      addBox(parent, [0.24, 0.18, 0.44], [mbX, Y0 + 0.98, mbZ], CONFIG.PALETTE.metal);
+      addCylinder(parent, 0.12, 0.12, 0.44, [mbX, Y0 + 1.07, mbZ], CONFIG.PALETTE.metal, {
+        rotation: [Math.PI / 2, 0, 0],
+        segments: 8,
+      });
+      // Raised red flag on side
+      addBox(parent, [0.03, 0.22, 0.04], [mbX + 0.14, Y0 + 1.10, mbZ + 0.06], CONFIG.PALETTE.red);
+      addBox(parent, [0.03, 0.10, 0.12], [mbX + 0.14, Y0 + 1.18, mbZ + 0.10], CONFIG.PALETTE.red);
+
+      // --- Father and Son playing catch in the foreground ---
+      const father = addPerson(parent, {
+        height: 1.78,
+        shirt: CONFIG.PALETTE.blue,
+        pants: CONFIG.PALETTE.pants,
+        skin: CONFIG.PALETTE.skin,
+        hair: CONFIG.PALETTE.hairBrown,
+        hat: CONFIG.PALETTE.blue,
+        pose: 'throw',
+        position: [-2.05, Y0, 1.75],
+        rotationY: Math.PI / 2,
+      });
+
+      const son = addPerson(parent, {
+        height: 1.25,
+        shirt: CONFIG.PALETTE.red,
+        pants: 0x455873,
+        skin: CONFIG.PALETTE.skin,
+        hair: CONFIG.PALETTE.hairBrown,
+        hat: CONFIG.PALETTE.red,
+        pose: 'bat',
+        position: [2.05, Y0, 1.75],
+        rotationY: -Math.PI / 2,
+      });
+
+      // Thin wooden baseball bat held by the son's right arm
+      addCylinder(
+        son.rightArm,
+        0.022,
+        0.042,
+        0.74,
+        [0.03, -0.34, 0.28],
+        CONFIG.PALETTE.wood,
+        { rotation: [1.15, 0, -0.25], segments: 8 }
+      );
+
+      // Animated white baseball arcing between father and son every ~2 seconds
+      const ball = addSphere(parent, 0.085, [0, Y0 + 1.15, 1.75], 0xffffff, {
+        widthSegments: 8,
+        heightSegments: 6,
+      });
+
+      const dadHandX = -1.68;
+      const dadHandY = Y0 + 1.38;
+      const sonHandX = 1.65;
+      const sonHandY = Y0 + 0.96;
+      const PERIOD = 2.0;
+
+      return {
+        update(time) {
+          const cycle = Math.floor(time / PERIOD);
+          const u = (time % PERIOD) / PERIOD; // 0..1 within current 2s throw
+          const flightEnd = 0.68;
+          const f = Math.min(u / flightEnd, 1.0);
+          const forwardThrow = cycle % 2 === 0;
+
+          if (forwardThrow) {
+            // Father pitches to Son
+            const x = dadHandX + (sonHandX - dadHandX) * f;
+            const yBase = dadHandY + (sonHandY - dadHandY) * f;
+            const arc = 4 * f * (1 - f) * 1.15;
+            ball.position.set(x, yBase + arc, 1.75);
+
+            // Subtle throwing & batting motion
+            const releaseSwing = u < 0.25 ? Math.sin((u / 0.25) * Math.PI) * 0.7 : 0;
+            father.rightArm.rotation.x = -2.1 + releaseSwing;
+            const batSwing =
+              u > 0.52 && u < 0.82 ? Math.sin(((u - 0.52) / 0.3) * Math.PI) * 0.8 : 0;
+            son.rightArm.rotation.x = -1.1 - batSwing;
+          } else {
+            // Son hits/lobs ball back to Father
+            const x = sonHandX + (dadHandX - sonHandX) * f;
+            const yBase = sonHandY + (dadHandY - sonHandY) * f;
+            const arc = 4 * f * (1 - f) * 1.45;
+            ball.position.set(x, yBase + arc, 1.75);
+
+            son.rightArm.rotation.x = -1.1;
+            const catchLift =
+              u > 0.55 && u < 0.85 ? Math.sin(((u - 0.55) / 0.3) * Math.PI) * 0.35 : 0;
+            father.rightArm.rotation.x = -2.1 - catchLift;
+          }
+        },
+      };
     }
 
 
@@ -373,7 +942,7 @@
         title: 'More time with the people you love.',
         description:
           "Pay ... $ a year and be ready for the day your career ends. Spend it where it matters: at home, with the people you love. That's what our retirement insurance is for.",
-        build: buildPlaceholderCrate,
+        build: buildFrontYardBaseball,
       },
       {
         id: 'peace-of-mind',
@@ -406,6 +975,8 @@
     renderer.shadowMap.enabled = CONFIG.ENABLE_SHADOWS;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.insertBefore(renderer.domElement, document.body.firstChild);
+
+    const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(CONFIG.PALETTE.sky);
@@ -454,11 +1025,11 @@
     // follows the uniform equator rather than converging at a pole vertex.
     const groundGeo = new THREE.SphereGeometry(CONFIG.PLANET_RADIUS, 64, 32);
     groundGeo.rotateZ(Math.PI / 2);
-    const groundMesh = new THREE.Mesh(groundGeo, getFlatMaterial(CONFIG.PALETTE.grass));
+    const groundMesh = new THREE.Mesh(groundGeo, getMaterial(CONFIG.PALETTE.grass));
     groundMesh.receiveShadow = true;
     planet.add(groundMesh);
 
-    // Build a curved rectangular band along the planet's YZ great circle
+    // Curved rectangular band along the planet's YZ great circle
     function createRoadArcGeometry(rTop, rBottom, width, sStart, sEnd, segLength) {
       const steps = Math.max(2, Math.ceil((sEnd - sStart) / segLength));
       const halfW = width * 0.5;
@@ -471,7 +1042,6 @@
         const c = Math.cos(theta);
         const sn = Math.sin(theta);
 
-        // 4 vertices per ring: left-bottom, left-top, right-top, right-bottom
         positions.push(
           -halfW, rBottom * c, -rBottom * sn,
           -halfW, rTop * c, -rTop * sn,
@@ -483,15 +1053,11 @@
       for (let i = 0; i < steps; i++) {
         const a = i * 4;
         const b = (i + 1) * 4;
-        // Left side skirt
         indices.push(a + 0, b + 0, b + 1, a + 0, b + 1, a + 1);
-        // Top surface
         indices.push(a + 1, b + 1, b + 2, a + 1, b + 2, a + 2);
-        // Right side skirt
         indices.push(a + 2, b + 2, b + 3, a + 2, b + 3, a + 3);
       }
 
-      // Start & end caps
       const last = steps * 4;
       indices.push(0, 1, 2, 0, 2, 3);
       indices.push(last + 0, last + 2, last + 1, last + 0, last + 3, last + 2);
@@ -506,7 +1072,6 @@
     const roadStartS = -5;
     const roadEndS = MAX_PROGRESS + 5;
 
-    // Lighter verges slightly wider and lower than the main road surface
     const vergeMesh = new THREE.Mesh(
       createRoadArcGeometry(
         CONFIG.PLANET_RADIUS + 0.04,
@@ -516,12 +1081,11 @@
         roadEndS,
         2.0
       ),
-      getFlatMaterial(CONFIG.PALETTE.verge)
+      getMaterial(CONFIG.PALETTE.verge)
     );
     vergeMesh.receiveShadow = true;
     planet.add(vergeMesh);
 
-    // Main dark road surface
     const roadMesh = new THREE.Mesh(
       createRoadArcGeometry(
         CONFIG.PLANET_RADIUS + 0.08,
@@ -531,17 +1095,17 @@
         roadEndS,
         2.0
       ),
-      getFlatMaterial(CONFIG.PALETTE.road)
+      getMaterial(CONFIG.PALETTE.road)
     );
     roadMesh.receiveShadow = true;
     planet.add(roadMesh);
 
-    // Dashed center line as a single InstancedMesh along the great circle
+    // Dashed center line
     const dashCount = Math.floor(MAX_PROGRESS / CONFIG.DASH_STEP) + 1;
     const dashGeo = new THREE.BoxGeometry(CONFIG.DASH_WIDTH, 0.03, CONFIG.DASH_LENGTH);
     const dashMesh = new THREE.InstancedMesh(
       dashGeo,
-      getFlatMaterial(CONFIG.PALETTE.line),
+      getMaterial(CONFIG.PALETTE.line),
       dashCount
     );
     dashMesh.receiveShadow = true;
@@ -559,7 +1123,7 @@
     dashMesh.instanceMatrix.needsUpdate = true;
     planet.add(dashMesh);
 
-    // Place stations along the planet
+    // Place all stations (sign on left, diorama on right)
     const stations = SECTIONS.map((section, index) => {
       const s = CONFIG.FIRST_STATION + index * CONFIG.STATION_SPACING;
 
@@ -571,7 +1135,14 @@
       stationGroup.position.set(0, CONFIG.PLANET_RADIUS, 0);
       pivot.add(stationGroup);
 
-      // Diorama container positioned on the right side of the road
+      // Sign on the left side of the road
+      const signGroup = new THREE.Group();
+      signGroup.position.set(SIGN_LAYOUT.x, 0, SIGN_LAYOUT.z);
+      signGroup.rotation.y = SIGN_LAYOUT.rotationY;
+      stationGroup.add(signGroup);
+      buildSign(signGroup, section, maxAnisotropy);
+
+      // Diorama on the right side of the road
       const sceneGroup = new THREE.Group();
       sceneGroup.position.set(SCENE_LAYOUT.x, 0, SCENE_LAYOUT.z);
       sceneGroup.rotation.y = SCENE_LAYOUT.rotationY;
@@ -594,6 +1165,7 @@
     let speed = 0;
     let yaw = 0;
     let pitch = 0;
+    let autoTargetProgress = null;
     const MAX_PITCH_RAD = THREE.MathUtils.degToRad(CONFIG.MAX_PITCH_DEG);
 
     const canvas = renderer.domElement;
@@ -616,6 +1188,8 @@
       button.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        // Manual hold immediately cancels any stop-dot auto-cruise
+        autoTargetProgress = null;
         pointerSet.add(e.pointerId);
         try {
           button.setPointerCapture(e.pointerId);
@@ -661,13 +1235,10 @@
       lastDragY = e.clientY;
 
       const invert = CONFIG.INVERT_LOOK ? -1 : 1;
-      // Grab-the-world feel: dragging right pans view left (+yaw),
-      // dragging down tilts view up (+pitch).
       yaw += dx * CONFIG.LOOK_SENSITIVITY * invert;
       pitch += dy * CONFIG.LOOK_SENSITIVITY * invert;
       pitch = THREE.MathUtils.clamp(pitch, -MAX_PITCH_RAD, MAX_PITCH_RAD);
 
-      // Keep yaw wrapped to [-PI, PI]
       if (yaw > Math.PI) yaw -= Math.PI * 2;
       if (yaw < -Math.PI) yaw += Math.PI * 2;
     });
@@ -681,7 +1252,6 @@
     canvas.addEventListener('pointercancel', endDrag);
     canvas.addEventListener('lostpointercapture', endDrag);
 
-    // Prevent long-press context menu and clear held inputs if tab loses focus
     window.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('blur', () => {
       forwardPointers.clear();
@@ -696,12 +1266,28 @@
     const hudHintEl = document.getElementById('hud-hint');
     const srContentEl = document.getElementById('sr-content');
 
-    // Build one progress dot per station
-    const dots = SECTIONS.map(() => {
+    // Build clickable progress stop buttons from SECTIONS
+    const dotButtons = SECTIONS.map((section, index) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hud-dot-btn';
+      btn.setAttribute('aria-label', `Go to stop ${index + 1}: ${section.title}`);
+
       const dot = document.createElement('span');
       dot.className = 'hud-dot';
-      hudDotsEl.appendChild(dot);
-      return dot;
+      btn.appendChild(dot);
+
+      // Prevent dot tap from triggering canvas drag
+      btn.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+      });
+
+      btn.addEventListener('click', () => {
+        autoTargetProgress = stations[index].s;
+      });
+
+      hudDotsEl.appendChild(btn);
+      return btn;
     });
 
     // Generate visually hidden HTML copy from SECTIONS
@@ -725,7 +1311,7 @@
         hudHintEl.classList.add('is-hidden');
       }
 
-      // Light only the dot of the nearest station when within 1/3 spacing
+      // Highlight nearest station dot when within 1/3 spacing, plus any active tap target
       let nearestIndex = -1;
       let nearestDist = Infinity;
       for (let i = 0; i < stations.length; i++) {
@@ -736,11 +1322,12 @@
         }
       }
 
-      for (let i = 0; i < dots.length; i++) {
-        dots[i].classList.toggle(
-          'is-active',
-          i === nearestIndex && nearestDist <= DOT_ACTIVE_RANGE
-        );
+      for (let i = 0; i < dotButtons.length; i++) {
+        const isActive = i === nearestIndex && nearestDist <= DOT_ACTIVE_RANGE;
+        const isTarget =
+          autoTargetProgress !== null && Math.abs(autoTargetProgress - stations[i].s) < 0.01;
+        dotButtons[i].classList.toggle('is-active', isActive);
+        dotButtons[i].classList.toggle('is-target', isTarget && !isActive);
       }
     }
 
@@ -764,12 +1351,31 @@
       lastTime = now;
       const elapsed = now * 0.001;
 
-      // Determine movement target from held buttons
       const goForward = forwardPointers.size > 0;
       const goBackward = backwardPointers.size > 0;
       let targetSpeed = 0;
-      if (goForward && !goBackward) targetSpeed = CONFIG.MAX_SPEED;
-      else if (goBackward && !goForward) targetSpeed = -CONFIG.MAX_SPEED;
+
+      if (goForward && !goBackward) {
+        autoTargetProgress = null;
+        targetSpeed = CONFIG.MAX_SPEED;
+      } else if (goBackward && !goForward) {
+        autoTargetProgress = null;
+        targetSpeed = -CONFIG.MAX_SPEED;
+      } else if (autoTargetProgress !== null) {
+        const diff = autoTargetProgress - progress;
+        if (Math.abs(diff) <= 0.08 && Math.abs(speed) <= 0.15) {
+          progress = autoTargetProgress;
+          speed = 0;
+          targetSpeed = 0;
+          autoTargetProgress = null;
+        } else {
+          targetSpeed = THREE.MathUtils.clamp(
+            diff * CONFIG.NAV_DAMPING,
+            -CONFIG.NAV_SPEED,
+            CONFIG.NAV_SPEED
+          );
+        }
+      }
 
       // Smooth speed exponentially and advance progress along the road
       const ease = 1 - Math.exp(-CONFIG.SPEED_EASE_RATE * dt);
